@@ -1,0 +1,62 @@
+import cv2
+import socket
+from ultralytics import YOLO
+
+STREAM_URL = 'esp url of the cam '
+
+
+MAIN_ESP32_IP = "XXX.XXX.0.XX" 
+UDP_PORT = 4210
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+print("Loading YOLOv8 AI Model...")
+model = YOLO("yolov8n.pt") 
+
+print(f"Connecting to stream at {STREAM_URL}...")
+cap = cv2.VideoCapture(STREAM_URL)
+
+frame_count = 0
+TOTAL_SCREEN_AREA = 640 * 480 
+
+while True:
+    ret, frame = cap.read()
+    if not ret: continue
+
+    frame_count += 1
+    
+    # nur jeden 3 frame bearbeiten 
+    if frame_count % 3 == 0:
+        results = model(frame, stream=True, verbose=False)
+
+        for r in results:
+            for box in r.boxes:
+                confidence = box.conf[0]
+                cls = int(box.cls[0])
+                class_name = model.names[cls]
+                
+                # 
+                if confidence > 0.50:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    
+                    box_area = (x2 - x1) * (y2 - y1)
+                    screen_percentage = (box_area / TOTAL_SCREEN_AREA) * 100
+
+                    # wenn das Object mehr als 45% vom Bild nimmt 
+                    if screen_percentage > 45.0:
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 4) 
+                        cv2.putText(frame, f"CRASH: {class_name}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+                        
+                        # 1.  WARNING light
+                        sock.sendto(b"WARN", (MAIN_ESP32_IP, UDP_PORT))
+                        
+                        # 2. FUTURE UPGRADE: 
+                        #
+                    else:
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2) 
+                        cv2.putText(frame, f"{class_name}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    cv2.imshow("Triple-Brain YOLO Vision", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'): break
+
+cap.release()
+cv2.destroyAllWindows()
